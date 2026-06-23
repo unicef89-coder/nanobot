@@ -42,7 +42,6 @@ RUN useradd -m -u 1000 -s /bin/bash nanobot && \
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
-USER nanobot
 ENV HOME=/home/nanobot
 
 # Gateway health endpoint and optional WebUI/WebSocket channel ports
