@@ -75,6 +75,12 @@ async function sendResult($: EngineInterface) {
   $.ui.toast('Sent the rewritten prompt')
 }
 
+// A command cannot submit while it holds its own turn: send once it has returned.
+async function sendSoon($: EngineInterface) {
+  await $.clock.sleep(250)
+  await sendResult($)
+}
+
 async function useResultInBox($: EngineInterface) {
   const text = await read($, result)
   if (!text) return
@@ -134,10 +140,49 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'promptmaster' }, async ($, e) => {
-    const rough = e.args.trim()
-    await openPane($)
-    if (rough) await rewriteDraft($, rough)
-    return { text: 'Prompt Master is open.', isTextDisplayOnly: true }
+    const arg = e.args.trim()
+    const word = arg.toLowerCase()
+
+    if (word === 'send') {
+      const text = await read($, result)
+      if (!text) return { text: 'Nothing to send yet. Use /promptmaster <rough prompt> first.', isTextDisplayOnly: true }
+      void sendSoon($)
+      return { text: 'Sending the rewritten prompt…', isTextDisplayOnly: true }
+    }
+    if (word === 'auto') {
+      await toggleArmed($)
+      const nowOn = await read($, isArmed)
+      return {
+        text: nowOn
+          ? 'Auto is ON: your next chat message will be rewritten as it is sent.'
+          : 'Auto is off.',
+        isTextDisplayOnly: true,
+      }
+    }
+
+    void openPane($)
+    if (!arg) {
+      return {
+        text: [
+          '✨ Prompt Master',
+          '',
+          '• /promptmaster <rough prompt> — rewrite it and show the better version',
+          '• /promptmaster send — send the last rewrite',
+          '• /promptmaster auto — rewrite your next chat message automatically',
+        ].join('\n'),
+        isTextDisplayOnly: true,
+      }
+    }
+
+    await rewriteDraft($, arg)
+    const out = await read($, result)
+    if (!out) {
+      return { text: (await read($, error)) || 'Could not rewrite. Try again.', isTextDisplayOnly: true }
+    }
+    return {
+      text: `✨ Better prompt:\n\n${out}\n\nTap ➤ Send in the Prompt Master panel, or type /promptmaster send.`,
+      isTextDisplayOnly: true,
+    }
   })
 
   on('prompt.submit', async ($, e, next) => {

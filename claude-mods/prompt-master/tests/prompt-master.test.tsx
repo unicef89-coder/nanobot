@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 const BAND = {
   plugin: 'prompt-master',
@@ -58,5 +58,28 @@ test('on mobile the pane rewrites and sends', async ($, on) => {
   await ui.press({ key: 'rewrite' })
   expect(await ui.find({ type: 'Text', text: BETTER })).toBeDefined()
   await ui.press({ key: 'send' })
+  expect(sent).toEqual([BETTER])
+})
+
+test('/promptmaster <rough> prints the rewrite, /promptmaster send sends it', async ($, on) => {
+  const sent: string[] = []
+  const clock = mock.clock(on)
+  on('command.register', () => ({ value: { command: 'promptmaster' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('model.complete', () => ({
+    value: { isAnswered: true, text: BETTER, usage: { input_tokens: 1, output_tokens: 1 } },
+  }))
+  on('prompt.submit', (_, e) => {
+    sent.push(e.text)
+    return { text: e.text }
+  })
+  on('ui.toast', () => ({ value: undefined }))
+
+  await $.session.start({ cwd: '/', surface: 'mobile', isInteractive: true })
+  const r = await $.command.run({ command: 'promptmaster', args: 'fix the login bug its broken' })
+  expect(r.text).toContain(BETTER)
+  await $.command.run({ command: 'promptmaster', args: 'send' })
+  await clock.advance(500)
   expect(sent).toEqual([BETTER])
 })
