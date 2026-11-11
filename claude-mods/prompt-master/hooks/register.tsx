@@ -3,10 +3,16 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Phase } from '../types'
 
+const PANE = 'prompt-master'
+const TITLE = '✨ Prompt Master'
+
 const phase = atom({ plugin: 'prompt-master', key: 'phase' } as const, 'idle' as Phase)
-// Armed: rewrite the next prompt as it is sent (for surfaces whose own
-// composer a mod cannot read, such as the mobile app).
+// Armed: rewrite the next typed message as it is sent.
 const isArmed = atom({ plugin: 'prompt-master', key: 'isArmed' } as const, false)
+// The pane's own rough prompt and its rewrite (works on every surface, mobile too).
+const draft = atom({ plugin: 'prompt-master', key: 'draft' } as const, '')
+const result = atom({ plugin: 'prompt-master', key: 'result' } as const, '')
+const error = atom({ plugin: 'prompt-master', key: 'error' } as const, '')
 
 const SYSTEM = `You are Prompt Master. You rewrite a user's rough prompt for an AI coding assistant into a better prompt.
 
@@ -23,12 +29,12 @@ type Rewrite = { ok: true; text: string } | { ok: false; why: string }
 async function rewrite($: EngineInterface, rough: string): Promise<Rewrite> {
   const r = await $.model
     .complete({
-    model: 'sonnet',
-    system: SYSTEM,
-    prompt: `Rough prompt:\n<<<\n${rough}\n>>>`,
-    maxTokens: 2048,
-    effort: 'low',
-    timeoutMs: 60000,
+      model: 'sonnet',
+      system: SYSTEM,
+      prompt: `Rough prompt:\n<<<\n${rough}\n>>>`,
+      maxTokens: 2048,
+      effort: 'low',
+      timeoutMs: 60000,
     })
     .catch((err: unknown) => ({ isAnswered: false as const, reason: String(err) }))
   if (!r.isAnswered) return { ok: false, why: r.reason }
@@ -36,19 +42,67 @@ async function rewrite($: EngineInterface, rough: string): Promise<Rewrite> {
   return text ? { ok: true, text } : { ok: false, why: 'empty-reply' }
 }
 
+async function openPane($: EngineInterface) {
+  return $.ui.open({ id: PANE, title: TITLE, focus: true })
+}
+
+// Pane: rewrite what was typed in the pane's own field.
+async function rewriteDraft($: EngineInterface, text?: string) {
+  if ((await read($, phase)) === 'busy') return
+  const rough = (text ?? (await read($, draft))).trim()
+  if (text !== undefined) await update($, draft, () => text)
+  if (!rough) {
+    await update($, error, () => 'Type a rough prompt first.')
+    return
+  }
+  await update($, error, () => '')
+  await update($, phase, () => 'busy' as Phase)
+  try {
+    const out = await rewrite($, rough)
+    if (out.ok) await update($, result, () => out.text)
+    else await update($, error, () => `Could not rewrite (${out.why}). Try again.`)
+  } finally {
+    await update($, phase, () => 'idle' as Phase)
+  }
+}
+
+async function sendResult($: EngineInterface) {
+  const text = await read($, result)
+  if (!text) return
+  await update($, draft, () => '')
+  await update($, result, () => '')
+  void $.prompt.submit({ text })
+  $.ui.toast('Sent the rewritten prompt')
+}
+
+async function useResultInBox($: EngineInterface) {
+  const text = await read($, result)
+  if (!text) return
+  const filled = await $.prompt.fill({ text, mode: 'replace' })
+  if (filled.isFilled) {
+    await update($, draft, () => '')
+    await update($, result, () => '')
+    $.ui.toast('Rewrite is in the prompt box. Edit it or press Enter')
+  } else {
+    await update($, error, () => 'This app does not let mods write the prompt box. Use Send.')
+  }
+}
+
+async function toggleArmed($: EngineInterface) {
+  const was = await read($, isArmed)
+  await update($, isArmed, () => !was)
+  $.ui.toast(
+    was ? 'Prompt Master disarmed' : 'Armed: your next message will be rewritten as it is sent',
+  )
+}
+
+// Band button (terminal/desktop): rewrite the draft in the prompt box in place.
 async function runFromBox($: EngineInterface) {
   if ((await read($, phase)) === 'busy') return
   const box = await $.prompt.read()
   const rough = box.text.trim()
   if (!rough) {
-    // Nothing readable in the box: arm a rewrite of the next send instead.
-    const wasArmed = await read($, isArmed)
-    await update($, isArmed, () => !wasArmed)
-    $.ui.toast(
-      wasArmed
-        ? 'Prompt Master disarmed'
-        : 'Prompt Master armed: your next message will be rewritten before it is sent',
-    )
+    await openPane($)
     return
   }
   await update($, phase, () => 'busy' as Phase)
@@ -69,31 +123,21 @@ async function runFromBox($: EngineInterface) {
   }
 }
 
-
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'promptmaster',
-      description: 'Rewrite a rough prompt into a better one: /promptmaster <rough prompt>',
+      description: 'Open Prompt Master, or rewrite inline: /promptmaster <rough prompt>',
     })
+    void $.ui.open({ id: PANE, title: TITLE })
     return next(e)
   })
 
   on('command.run', { command: 'promptmaster' }, async ($, e) => {
     const rough = e.args.trim()
-    if (!rough) {
-      await runFromBox($)
-      return { text: 'Usage: /promptmaster <rough prompt>', isTextDisplayOnly: true }
-    }
-    const out = await rewrite($, rough)
-    if (!out.ok) return { text: `Prompt Master could not rewrite (${out.why})`, isTextDisplayOnly: true }
-    const filled = await $.prompt.fill({ text: out.text, mode: 'replace' })
-    return {
-      text: filled.isFilled
-        ? 'Rewritten prompt is in the box. Review it, then press Enter.'
-        : `Rewritten prompt:\n\n${out.text}`,
-      isTextDisplayOnly: true,
-    }
+    await openPane($)
+    if (rough) await rewriteDraft($, rough)
+    return { text: 'Prompt Master is open.', isTextDisplayOnly: true }
   })
 
   on('prompt.submit', async ($, e, next) => {
@@ -117,27 +161,78 @@ export const register: Register = on => {
     }
   })
 
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Button, Input, Text } = $.ui.resolve(e)
+    const busy = (await read($, phase)) === 'busy'
+    const armed = await read($, isArmed)
+    const rough = await read($, draft)
+    const out = await read($, result)
+    const err = await read($, error)
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Input
+          key="rough"
+          label="Rough prompt"
+          placeholder="Type it however it comes out…"
+          value={rough}
+          rows={4}
+          submitLabel="rewrite"
+          onInput={value => void update($, draft, () => value)}
+          onSubmit={value => void rewriteDraft($, value)}
+        />
+        <Box flexDirection="row" gap={1}>
+          <Button
+            key="rewrite"
+            label={busy ? '✨ Rewriting…' : '✨ Rewrite'}
+            onPress={() => rewriteDraft($)}
+          />
+          <Button
+            key="arm"
+            label={armed ? 'Auto: ON' : 'Auto: off'}
+            onPress={() => toggleArmed($)}
+          />
+        </Box>
+        {err !== '' && <Text color="red">{err}</Text>}
+        {out !== '' && (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Better prompt</Text>
+            <Text>{out}</Text>
+            <Box flexDirection="row" gap={1}>
+              <Button key="send" label="➤ Send" onPress={() => sendResult($)} />
+              <Button key="use" label="Put in box" onPress={() => useResultInBox($)} />
+              <Button
+                key="discard"
+                label="Discard"
+                onPress={() => update($, result, () => '')}
+              />
+            </Box>
+          </Box>
+        )}
+        {out === '' && !busy && (
+          <Text dimColor>
+            {armed
+              ? 'Auto is on: the next message you type in the chat box is rewritten as it is sent.'
+              : 'Tap Rewrite to improve it, then Send. Auto rewrites your next chat message instead.'}
+          </Text>
+        )}
+      </Box>
+    )
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const busy = (await read($, phase)) === 'busy'
-    const armed = await read($, isArmed)
 
     return (
       <Box>
         <Button
           key="prompt-master"
-          label={busy ? '✨ Rewriting…' : armed ? '✨ Prompt Master (armed)' : '✨ Prompt Master'}
+          label={busy ? '✨ Rewriting…' : '✨ Prompt Master'}
           onPress={() => runFromBox($)}
         />
-        <Text dimColor>
-          {' '}
-          {busy
-            ? 'improving your prompt'
-            : armed
-              ? 'next message will be rewritten · tap to disarm'
-              : 'type a rough prompt, then tap to rewrite it'}
-        </Text>
+        <Text dimColor> {busy ? 'improving your prompt' : 'rewrite what you typed'}</Text>
       </Box>
     )
   })

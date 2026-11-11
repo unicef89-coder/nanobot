@@ -6,7 +6,23 @@ const BAND = {
   props: { hasSurvey: false, isCollapsed: false },
 } as const
 
-test('the button rewrites the draft in the box', async ($, on) => {
+const PANE = {
+  plugin: 'prompt-master',
+  component: 'Pane',
+  requestId: 'prompt-master',
+  props: {
+    title: '✨ Prompt Master',
+    isFocused: true,
+    bodyColumns: 40,
+    placement: 'dock',
+    scroll: { offset: 0, bodyRows: 30 },
+    view: {},
+  },
+} as const
+
+const BETTER = 'Fix the login bug. Find the cause, fix it, and add a test.'
+
+test('the band button rewrites the draft in the box', async ($, on) => {
   let box = { text: 'fix the login bug its broken', cursor: 0 }
   on('prompt.read', () => ({ value: box }))
   on('prompt.fill', (_, e) => {
@@ -14,11 +30,7 @@ test('the button rewrites the draft in the box', async ($, on) => {
     return { isFilled: true }
   })
   on('model.complete', () => ({
-    value: {
-      isAnswered: true,
-      text: 'Fix the login bug. Find the cause, fix it, and add a test.',
-      usage: { input_tokens: 1, output_tokens: 1 },
-    },
+    value: { isAnswered: true, text: BETTER, usage: { input_tokens: 1, output_tokens: 1 } },
   }))
   on('ui.toast', () => ({ value: undefined }))
 
@@ -26,15 +38,25 @@ test('the button rewrites the draft in the box', async ($, on) => {
     box = { text: 'fix the login bug its broken', cursor: 0 }
     const ui = await $.ui.mount({ ...BAND, surface })
     await ui.press({ key: 'prompt-master' })
-    expect(box.text).toBe('Fix the login bug. Find the cause, fix it, and add a test.')
+    expect(box.text).toBe(BETTER)
   }
 })
 
-test('an empty box arms a rewrite of the next message', async ($, on) => {
-  on('prompt.read', () => ({ value: { text: '', cursor: 0 } }))
+test('on mobile the pane rewrites and sends', async ($, on) => {
+  const sent: string[] = []
+  on('model.complete', () => ({
+    value: { isAnswered: true, text: BETTER, usage: { input_tokens: 1, output_tokens: 1 } },
+  }))
+  on('prompt.submit', (_, e) => {
+    sent.push(e.text)
+    return { text: e.text }
+  })
   on('ui.toast', () => ({ value: undefined }))
 
-  const ui = await $.ui.mount({ ...BAND, surface: 'mobile' })
-  await ui.press({ key: 'prompt-master' })
-  expect((await ui.find({ key: 'prompt-master' }))?.text).toContain('armed')
+  const ui = await $.ui.mount({ ...PANE, surface: 'mobile' })
+  await ui.input({ key: 'rough', text: 'fix the login bug its broken' })
+  await ui.press({ key: 'rewrite' })
+  expect(await ui.find({ type: 'Text', text: BETTER })).toBeDefined()
+  await ui.press({ key: 'send' })
+  expect(sent).toEqual([BETTER])
 })
