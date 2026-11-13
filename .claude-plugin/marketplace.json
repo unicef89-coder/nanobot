@@ -1,0 +1,11 @@
+{
+  "name": "nanobot-mods",
+  "owner": { "name": "unicef89-coder" },
+  "plugins": [
+    {
+      "name": "prompt-master",
+      "source": "./claude-mods/prompt-master",
+      "description": "One-click rewrite of your rough prompt into a clear, well-structured one before you send it"
+    }
+  ]
+}
