@@ -15,3 +15,17 @@ Also:
 - **✨ Prompt Master button** above the prompt box (terminal and desktop): rewrites the draft in the box in place.
 
 Rewrites keep your intent, names, paths and code; it never adds requirements.
+
+## Install
+
+At the prompt of a Claude Code session:
+
+```
+/plugin install prompt-master --marketplace unicef89-coder/nanobot
+```
+
+Answer `y` to add the marketplace, then pick a scope. From a shell:
+
+```
+claude plugin install prompt-master --marketplace unicef89-coder/nanobot
+```
