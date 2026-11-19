@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "nanobot-mods": {
+      "source": {
+        "source": "github",
+        "repo": "unicef89-coder/nanobot"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "prompt-master@nanobot-mods": true
+  }
+}
